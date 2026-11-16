@@ -592,6 +592,116 @@ class KiCad:
         if status.code != LibraryCommandStatus.Code.LCS_OK:
             raise LibraryCommandError(status.error_message, code=status.code)
 
+    def get_library_table(
+        self,
+        type: LibraryType.ValueType,
+        scope: LibraryTableScope.ValueType,
+        substituted: bool = False,
+    ) -> library_commands_pb2.LibraryTableResponse:
+        """Returns the rows of a library table
+
+        :param type: The type of library table to query.
+        :param scope: Which table to query.  With ``LTS_BOTH`` the rows of both tables are
+            returned (project rows first) and the response carries no table description.
+        :param substituted: If True, row URIs are returned with environment variables expanded.
+
+        .. versionadded:: 0.x.y (KiCad 11)
+        """
+        command = library_commands_pb2.GetLibraryTable()
+        command.type = type
+        command.scope = scope
+        command.substituted = substituted
+        return self._client.send(command, library_commands_pb2.LibraryTableResponse)
+
+    def add_library_table_entry(
+        self,
+        type: LibraryType.ValueType,
+        scope: LibraryTableScope.ValueType,
+        nickname: str,
+        uri: str,
+        description: str = "",
+        options: dict[str, str] | None = None,
+        disabled: bool = False,
+        hidden: bool = False,
+        create_library: bool = False,
+    ):
+        """Adds a row to a library table and saves the table
+
+        :param create_library: If True and nothing exists at the (expanded) URI yet, an empty
+            library is created there.
+        :raise: :class:`LibraryCommandError` if the row could not be added (for example
+            ``LCS_ALREADY_EXISTS`` or ``LCS_READ_ONLY``).
+
+        .. versionadded:: 0.x.y (KiCad 11)
+        """
+        command = library_commands_pb2.AddLibraryTableEntry()
+        _fill_library_table_entry(
+            command.entry, type, nickname, uri, description, options, disabled, hidden
+        )
+        command.scope = scope
+        command.create_library = create_library
+        self._check_library_status(self._client.send(command, LibraryCommandStatus))
+
+    def update_library_table_entry(
+        self,
+        type: LibraryType.ValueType,
+        scope: LibraryTableScope.ValueType,
+        nickname: str,
+        uri: str,
+        description: str = "",
+        options: dict[str, str] | None = None,
+        disabled: bool = False,
+        hidden: bool = False,
+    ):
+        """Replaces the URI, description, options and flags of the row with the given nickname
+        and saves the table
+
+        :raise: :class:`LibraryCommandError` if the row could not be updated (for example
+            ``LCS_NOT_FOUND``).
+
+        .. versionadded:: 0.x.y (KiCad 11)
+        """
+        command = library_commands_pb2.UpdateLibraryTableEntry()
+        _fill_library_table_entry(
+            command.entry, type, nickname, uri, description, options, disabled, hidden
+        )
+        command.scope = scope
+        self._check_library_status(self._client.send(command, LibraryCommandStatus))
+
+    def delete_library_table_entry(
+        self,
+        type: LibraryType.ValueType,
+        scope: LibraryTableScope.ValueType,
+        nickname: str,
+    ):
+        """Removes the row with the given nickname from a library table and saves the table
+
+        The library itself is not deleted from disk.
+
+        .. versionadded:: 0.x.y (KiCad 11)
+        """
+        command = library_commands_pb2.DeleteLibraryTableEntry()
+        command.type = type
+        command.scope = scope
+        command.nickname = nickname
+        self._check_library_status(self._client.send(command, LibraryCommandStatus))
+
+    def delete_library_item(self, type: LibraryType.ValueType, nickname: str, name: str):
+        """Deletes a symbol, footprint or design block from a writable library
+
+        .. versionadded:: 0.x.y (KiCad 11)
+        """
+        command = library_commands_pb2.DeleteLibraryItem()
+        command.type = type
+        command.item.library_nickname = nickname
+        command.item.entry_name = name
+        self._check_library_status(self._client.send(command, LibraryCommandStatus))
+
+    @staticmethod
+    def _check_library_status(status: LibraryCommandStatus):
+        if status.code != LibraryCommandStatus.Code.LCS_OK:
+            raise LibraryCommandError(status.error_message, code=status.code)
+
     def reload_library(
         self,
         type: LibraryType.ValueType,
@@ -690,3 +800,22 @@ class KiCad:
         reply = self._client.send(cmd, base_commands_pb2.GetTextAsShapesResponse)
 
         return [CompoundShape(entry.shapes) for entry in reply.text_with_shapes]
+
+
+def _fill_library_table_entry(
+    entry,
+    type: LibraryType.ValueType,
+    nickname: str,
+    uri: str,
+    description: str,
+    options: dict[str, str] | None,
+    disabled: bool,
+    hidden: bool,
+):
+    entry.type = type
+    entry.nickname = nickname
+    entry.uri = uri
+    entry.description = description
+    entry.options.update(options or {})
+    entry.disabled = disabled
+    entry.hidden = hidden

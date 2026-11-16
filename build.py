@@ -18,18 +18,42 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import glob
 import os
+import shutil
+import subprocess
+import tempfile
 
 import setuptools
 
 from tools.generate_protos import generate_protos
 
 
+def patched_protos(proto_in: str) -> str:
+    """CopperChat fork: applies proto_patches/*.patch (KiCad API additions that the KiCad
+    build CopperChat uses carries, but the kicad submodule does not) to a copy of the protos."""
+    patches = sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "proto_patches", "*.patch")))
+
+    if not patches:
+        return proto_in
+
+    # Outside any git work tree, so that git apply treats paths relative to the copy
+    root = tempfile.mkdtemp(prefix="kipy-proto-")
+    shutil.copytree(proto_in, os.path.join(root, "api", "proto"))
+
+    for patch in patches:
+        print(f"Applying {os.path.basename(patch)}")
+        subprocess.run(["git", "apply", "--include=api/proto/*", patch], cwd=root, check=True)
+
+    return os.path.join(root, "api", "proto")
+
+
 def pre_build():
     print("Generating protobuf wrappers...")
     proto_in = os.path.join(os.getcwd(), "kicad/api/proto")
     proto_out = os.path.join(os.getcwd(), "kipy/proto")
-    generate_protos(proto_in, proto_out)
+    generate_protos(patched_protos(proto_in), proto_out)
 
     os.chdir(os.path.join(os.getcwd(), "kicad"))
     stream = os.popen("git describe --long")
